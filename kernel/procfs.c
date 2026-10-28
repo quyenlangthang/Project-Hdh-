@@ -53,7 +53,7 @@ procfs_itoa(char *buf, uint n)
 }
 
 // 1. Hàm tra cứu và cấp phát Inode ảo cho ProcFS
-struct inode*
+struct inode *
 procfs_lookup(char *path)
 {
   // Khởi tạo Inode ảo một lần duy nhất
@@ -63,13 +63,14 @@ procfs_lookup(char *path)
     proc_uptime_inode.inum = 9999; // Định danh inum ảo đặc biệt
     proc_uptime_inode.ref = 0;
     proc_uptime_inode.type = T_PROC;
-    proc_uptime_inode.valid = 1;   // valid = 1 để ilock() không đọc block từ đĩa
+    proc_uptime_inode.valid = 1; // valid = 1 để ilock() không đọc block từ đĩa
     proc_uptime_inode.nlink = 1;
     proc_inited = 1;
   }
 
   // Khớp đường dẫn /proc/uptime hoặc proc/uptime
-  if (procfs_streq(path, "/proc/uptime") == 0 || procfs_streq(path, "proc/uptime") == 0) {
+  if (procfs_streq(path, "/proc/uptime") == 0 ||
+      procfs_streq(path, "proc/uptime") == 0) {
     proc_uptime_inode.ref++;
     return &proc_uptime_inode;
   }
