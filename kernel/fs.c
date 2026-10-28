@@ -512,6 +512,10 @@ readi(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
   uint tot, m;
   struct buf *bp;
 
+  if(ip->type == T_PROC){
+    return procfs_read(ip, user_dst, dst, off, n);
+  }
+
   if (off > ip->size || off + n < off)
     return 0;
   if (off + n > ip->size)
@@ -731,6 +735,14 @@ struct inode *
 namei(char *path)
 {
   char name[DIRSIZ];
+
+  // Chặn đường dẫn ProcFS và chuyển hướng sang bộ phân giải Inode ảo
+  if(strncmp(path, "/proc", 5) == 0 || strncmp(path, "proc", 4) == 0){
+    struct inode *ip = procfs_lookup(path);
+    if(ip != 0)
+      return ip;
+  }
+  
   return namex(path, 0, name);
 }
 
