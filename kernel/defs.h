@@ -55,6 +55,9 @@ void            stati(struct inode*, struct stat*);
 int             writei(struct inode*, int, uint64, uint, uint);
 void            itrunc(struct inode*);
 void            ireclaim(int);
+//added
+int             procfs_read(struct inode*, int, uint64, uint, uint);
+struct inode*   procfs_lookup(char*);
 
 // kalloc.c
 void*           kalloc(void);
