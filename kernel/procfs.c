@@ -14,6 +14,7 @@ extern struct spinlock tickslock;
 
 // Inode ảo tĩnh đại diện cho tệp /proc/uptime trong RAM
 static struct inode proc_uptime_inode;
+static struct inode proc_meminfo_inode;
 static int proc_inited = 0;
 
 // Hàm phụ trợ so sánh 2 chuỗi ký tự an toàn trong kernel
@@ -65,6 +66,13 @@ procfs_lookup(char *path)
     proc_uptime_inode.type = T_PROC;
     proc_uptime_inode.valid = 1; // valid = 1 để ilock() không đọc block từ đĩa
     proc_uptime_inode.nlink = 1;
+    initsleeplock(&proc_meminfo_inode.lock, "proc_meminfo");
+    proc_meminfo_inode.dev = 0;
+    proc_meminfo_inode.inum = 9998;
+    proc_meminfo_inode.ref = 0;
+    proc_meminfo_inode.type = T_PROC;
+    proc_meminfo_inode.valid = 1;
+    proc_meminfo_inode.nlink = 1;
     proc_inited = 1;
   }
 
@@ -74,7 +82,11 @@ procfs_lookup(char *path)
     proc_uptime_inode.ref++;
     return &proc_uptime_inode;
   }
-
+if (procfs_streq(path, "/proc/meminfo") == 0 ||
+      procfs_streq(path, "proc/meminfo") == 0) {
+    proc_meminfo_inode.ref++;
+    return &proc_meminfo_inode;
+  }
   return 0; // Trả về null nếu không tìm thấy tệp
 }
 
@@ -110,6 +122,34 @@ procfs_read_uptime(int user_dst, uint64 dst, uint off, uint n)
   return m;
 }
 
+int
+procfs_read_meminfo(int user_dst, uint64 dst, uint off, uint n)
+{
+  char buf[64];
+  uint64 free_b = freemem();
+  int len = 0;
+
+  char *prefix = "MemFree: ";
+  while (*prefix) {
+    buf[len++] = *prefix++;
+  }
+
+  len += procfs_itoa(buf + len, free_b);
+  buf[len++] = '\n';
+  buf[len] = '\0';
+
+  if (off >= len)
+    return 0;
+
+  uint m = len - off;
+  if (m > n)
+    m = n;
+
+  if (either_copyout(user_dst, dst, buf + off, m) == -1)
+    return -1;
+
+  return m;
+}
 // 3. Hàm điều phối đọc chính của hệ thống tệp ảo ProcFS
 int
 procfs_read(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
@@ -117,6 +157,8 @@ procfs_read(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
   if (ip == &proc_uptime_inode || ip->inum == 9999) {
     return procfs_read_uptime(user_dst, dst, off, n);
   }
-
+if (ip == &proc_meminfo_inode || ip->inum == 9998) {
+    return procfs_read_meminfo(user_dst, dst, off, n);
+  }
   return -1;
 }
