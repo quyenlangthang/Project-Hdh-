@@ -82,7 +82,7 @@ procfs_lookup(char *path)
     proc_uptime_inode.ref++;
     return &proc_uptime_inode;
   }
-if (procfs_streq(path, "/proc/meminfo") == 0 ||
+  if (procfs_streq(path, "/proc/meminfo") == 0 ||
       procfs_streq(path, "proc/meminfo") == 0) {
     proc_meminfo_inode.ref++;
     return &proc_meminfo_inode;
@@ -157,7 +157,7 @@ procfs_read(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
   if (ip == &proc_uptime_inode || ip->inum == 9999) {
     return procfs_read_uptime(user_dst, dst, off, n);
   }
-if (ip == &proc_meminfo_inode || ip->inum == 9998) {
+  if (ip == &proc_meminfo_inode || ip->inum == 9998) {
     return procfs_read_meminfo(user_dst, dst, off, n);
   }
   return -1;

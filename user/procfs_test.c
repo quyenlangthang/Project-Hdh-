@@ -48,7 +48,7 @@ test_small_buffer(void)
   char buf[4];
   int total_read = 0;
   int n;
-  
+
   while ((n = read(fd, buf, 3)) > 0) {
     total_read += n;
   }
