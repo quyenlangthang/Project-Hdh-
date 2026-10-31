@@ -701,3 +701,117 @@ procdump(void)
     printk("\n");
   }
 }
+
+static int
+proc_status_put_uint(char *buf, int max, int pos, uint64 value)
+{
+  char digits[20];
+  int n = 0;
+  int i;
+
+  if (pos >= max)
+    return -1;
+  if (value == 0)
+    digits[n++] = '0';
+  else {
+    while (value > 0) {
+      digits[n++] = '0' + value % 10;
+      value /= 10;
+    }
+  }
+  if (pos + n >= max)
+    return -1;
+  for (i = n - 1; i >= 0; i--)
+    buf[pos++] = digits[i];
+  return pos;
+}
+
+static int
+proc_status_put_str(char *buf, int max, int pos, const char *str)
+{
+  while (*str) {
+    if (pos + 1 >= max)
+      return -1;
+    buf[pos++] = *str++;
+  }
+  return pos;
+}
+
+// Build the /proc/<pid>/status contents from one consistent process snapshot.
+// Returns the status length, or -1 if the PID does not exist or the buffer is
+// too small.
+int
+proc_get_status_str(int pid, char *buf, int max)
+{
+  struct proc *p;
+  enum procstate state;
+  uint64 sz;
+  int ppid;
+  int killed;
+  char name[sizeof(p->name)];
+  int pos = 0;
+
+  if (buf == 0 || max <= 0)
+    return -1;
+
+  acquire(&wait_lock);
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->state != UNUSED && p->pid == pid) {
+      state = p->state;
+      sz = p->sz;
+      ppid = p->parent ? p->parent->pid : 0;
+      killed = p->killed;
+      safestrcpy(name, p->name, sizeof(name));
+      release(&p->lock);
+      release(&wait_lock);
+      goto found;
+    }
+    release(&p->lock);
+  }
+  release(&wait_lock);
+  return -1;
+
+found:
+  pos = proc_status_put_str(buf, max, pos, "Name:\t");
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_str(buf, max, pos, name);
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_str(buf, max, pos, "\nPid:\t");
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_uint(buf, max, pos, pid);
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_str(buf, max, pos, "\nPPid:\t");
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_uint(buf, max, pos, ppid);
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_str(buf, max, pos, "\nState:\t");
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_str(buf, max, pos, procstate_name(state));
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_str(buf, max, pos, "\nSize:\t");
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_uint(buf, max, pos, sz);
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_str(buf, max, pos, "\nKilled:\t");
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_uint(buf, max, pos, killed);
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_str(buf, max, pos, "\n");
+  if (pos < 0)
+    return -1;
+  buf[pos] = '\0';
+  return pos;
+}

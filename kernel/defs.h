@@ -111,6 +111,7 @@ void            procdump(void);
 int             procinfo_get(int, struct procinfo*);
 int             procinfo_pids(int*, int);
 const char*     procstate_name(enum procstate);
+int             proc_get_status_str(int, char*, int);
 
 // swtch.S
 void            swtch(struct context*, struct context*);
