@@ -5,10 +5,12 @@ struct file;
 struct inode;
 struct pipe;
 struct proc;
+struct procinfo;
 struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+enum procstate;
 
 // bio.c
 void            binit(void);
@@ -106,6 +108,10 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+int             procinfo_get(int, struct procinfo*);
+int             procinfo_pids(int*, int);
+const char*     procstate_name(enum procstate);
+int             proc_get_status_str(int, char*, int);
 
 // swtch.S
 void            swtch(struct context*, struct context*);

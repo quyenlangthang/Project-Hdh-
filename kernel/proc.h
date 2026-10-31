@@ -102,3 +102,13 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
 };
+
+// Snapshot of the externally visible state of a process.
+struct procinfo {
+  int pid;
+  int ppid;                    // 0 if the process has no parent
+  enum procstate state;
+  uint64 sz;                   // Process memory size in bytes
+  int killed;
+  char name[16];               // Same size as proc.name
+};
