@@ -13,6 +13,7 @@ OBJS = \
   $K/main.o \
   $K/vm.o \
   $K/proc.o \
+  $K/procinfo.o \
   $K/swtch.o \
   $K/trampoline.o \
   $K/trap.o \
@@ -48,6 +49,8 @@ TOOLPREFIX := $(shell if riscv64-unknown-elf-objdump -i 2>&1 | grep 'elf64-big' 
 	then echo 'riscv64-linux-gnu-'; \
 	elif riscv64-unknown-linux-gnu-objdump -i 2>&1 | grep 'elf64-big' >/dev/null 2>&1; \
 	then echo 'riscv64-unknown-linux-gnu-'; \
+	elif riscv-none-elf-objdump -i 2>&1 | grep 'elf64-big' >/dev/null 2>&1; \
+	then echo 'riscv-none-elf-'; \
 	else echo "***" 1>&2; \
 	echo "*** Error: Couldn't find a riscv64 version of GCC/binutils." 1>&2; \
 	echo "*** To turn off this error, run 'gmake TOOLPREFIX= ...'." 1>&2; \
@@ -68,6 +71,7 @@ DETFLAGS = -ffile-prefix-map=$(CURDIR)=.
 CFLAGS = -Wall -Werror -Wno-unknown-attributes -O -fno-omit-frame-pointer -ggdb -gdwarf-2
 CFLAGS += $(DETFLAGS)
 CFLAGS += -march=rv64gc
+CFLAGS += -mabi=lp64
 CFLAGS += -std=gnu99
 CFLAGS += -MD
 CFLAGS += -mcmodel=medany
@@ -91,7 +95,7 @@ ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]nopie'),)
 CFLAGS += -fno-pie -nopie
 endif
 
-LDFLAGS = -z max-page-size=4096
+LDFLAGS = -m elf64lriscv -z max-page-size=4096
 
 $K/kernel: $(OBJS) $K/kernel.ld
 	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) 
@@ -99,7 +103,7 @@ $K/kernel: $(OBJS) $K/kernel.ld
 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
 
 $K/%.o: $K/%.S
-	$(CC) -march=rv64gc -g $(DETFLAGS) -c -o $@ $<
+	$(CC) -march=rv64gc -mabi=lp64 -g $(DETFLAGS) -c -o $@ $<
 
 tags: $(OBJS)
 	etags kernel/*.S kernel/*.c
