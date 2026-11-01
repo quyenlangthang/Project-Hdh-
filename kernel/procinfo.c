@@ -56,16 +56,23 @@ procinfo_pids(int *pids, int max)
   return n;
 }
 
-const char*
+const char *
 procstate_name(enum procstate state)
 {
   switch (state) {
-  case UNUSED:   return "unused";
-  case USED:     return "used";
-  case SLEEPING: return "sleeping";
-  case RUNNABLE: return "runnable";
-  case RUNNING:  return "running";
-  case ZOMBIE:   return "zombie";
-  default:       return "???";
+  case UNUSED:
+    return "unused";
+  case USED:
+    return "used";
+  case SLEEPING:
+    return "sleeping";
+  case RUNNABLE:
+    return "runnable";
+  case RUNNING:
+    return "running";
+  case ZOMBIE:
+    return "zombie";
+  default:
+    return "???";
   }
 }

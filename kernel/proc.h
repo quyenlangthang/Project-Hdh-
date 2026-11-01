@@ -106,9 +106,9 @@ struct proc {
 // Snapshot of the externally visible state of a process.
 struct procinfo {
   int pid;
-  int ppid;                    // 0 if the process has no parent
+  int ppid; // 0 if the process has no parent
   enum procstate state;
-  uint64 sz;                   // Process memory size in bytes
+  uint64 sz; // Process memory size in bytes
   int killed;
-  char name[16];               // Same size as proc.name
+  char name[16]; // Same size as proc.name
 };
