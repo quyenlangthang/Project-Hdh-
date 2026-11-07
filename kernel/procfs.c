@@ -7,7 +7,7 @@
 #include "fs.h"
 #include "file.h"
 #include "stat.h"
-
+#include "memlayout.h"
 // Biến ticks và khóa đồng bộ thời gian từ kernel/trap.c
 extern uint ticks;
 extern struct spinlock tickslock;
@@ -125,17 +125,22 @@ procfs_read_uptime(int user_dst, uint64 dst, uint off, uint n)
 int
 procfs_read_meminfo(int user_dst, uint64 dst, uint off, uint n)
 {
-  char buf[64];
+  char buf[128];
+  uint64 total_b = PHYSTOP - KERNBASE;
   uint64 free_b = freemem();
   int len = 0;
 
-  char *prefix = "MemFree: ";
-  while (*prefix) {
-    buf[len++] = *prefix++;
-  }
+  // Ghi MemTotal
+  char *str1 = "MemTotal: ";
+  while (*str1) buf[len++] = *str1++;
+  len += procfs_itoa(buf + len, total_b);
+  buf[len++] = ' '; buf[len++] = 'B'; buf[len++] = '\n';
 
+  // Ghi MemFree
+  char *str2 = "MemFree: ";
+  while (*str2) buf[len++] = *str2++;
   len += procfs_itoa(buf + len, free_b);
-  buf[len++] = '\n';
+  buf[len++] = ' '; buf[len++] = 'B'; buf[len++] = '\n';
   buf[len] = '\0';
 
   if (off >= len)
