@@ -132,15 +132,21 @@ procfs_read_meminfo(int user_dst, uint64 dst, uint off, uint n)
 
   // Ghi MemTotal
   char *str1 = "MemTotal: ";
-  while (*str1) buf[len++] = *str1++;
+  while (*str1)
+    buf[len++] = *str1++;
   len += procfs_itoa(buf + len, total_b);
-  buf[len++] = ' '; buf[len++] = 'B'; buf[len++] = '\n';
+  buf[len++] = ' ';
+  buf[len++] = 'B';
+  buf[len++] = '\n';
 
   // Ghi MemFree
   char *str2 = "MemFree: ";
-  while (*str2) buf[len++] = *str2++;
+  while (*str2)
+    buf[len++] = *str2++;
   len += procfs_itoa(buf + len, free_b);
-  buf[len++] = ' '; buf[len++] = 'B'; buf[len++] = '\n';
+  buf[len++] = ' ';
+  buf[len++] = 'B';
+  buf[len++] = '\n';
   buf[len] = '\0';
 
   if (off >= len)
