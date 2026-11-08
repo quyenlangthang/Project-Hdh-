@@ -191,7 +191,7 @@ iinit()
   }
 }
 
-static struct inode *iget(uint dev, uint inum);
+struct inode *iget(uint dev, uint inum);
 
 // Allocate an inode on device dev.
 // Mark it as allocated by  giving it type type.
@@ -230,6 +230,9 @@ iupdate(struct inode *ip)
   struct buf *bp;
   struct dinode *dip;
 
+  if (ip->type == T_PROC)
+    return;
+
   bp = bread(ip->dev, IBLOCK(ip->inum, sb));
   dip = (struct dinode *)bp->data + ip->inum % IPB;
   dip->type = ip->type;
@@ -245,7 +248,7 @@ iupdate(struct inode *ip)
 // Find the inode with number inum on device dev
 // and return the in-memory copy. Does not lock
 // the inode and does not read it from disk.
-static struct inode *
+struct inode *
 iget(uint dev, uint inum)
 {
   struct inode *ip, *empty;
@@ -272,7 +275,14 @@ iget(uint dev, uint inum)
   ip->dev = dev;
   ip->inum = inum;
   ip->ref = 1;
-  ip->valid = 0;
+  if (inum >= 9000) {
+    ip->type = T_PROC;
+    ip->valid = 1;
+    ip->nlink = 1;
+    ip->size = 0;
+  } else {
+    ip->valid = 0;
+  }
   release(&itable.lock);
 
   return ip;
@@ -301,6 +311,11 @@ ilock(struct inode *ip)
     panic("ilock");
 
   acquiresleep(&ip->lock);
+
+  if (ip->type == T_PROC) {
+    ip->valid = 1;
+    return;
+  }
 
   if (ip->valid == 0) {
     bp = bread(ip->dev, IBLOCK(ip->inum, sb));
@@ -350,6 +365,18 @@ void
 iput(struct inode *ip)
 {
   acquire(&itable.lock);
+
+  if (ip->type == T_PROC) {
+    if (ip->ref == 1) {
+      ip->valid = 0;
+      ip->type = 0;
+      ip->ref = 0;
+    } else {
+      ip->ref--;
+    }
+    release(&itable.lock);
+    return;
+  }
 
   // Last reference of an unlinked inode?  Capture dev/inum before ref--,
   // since once ref hits 0, ip may be recycled by a concurrent iget()
@@ -467,6 +494,11 @@ itrunc(struct inode *ip)
   struct buf *bp;
   uint *a;
 
+  if (ip->type == T_PROC) {
+    ip->size = 0;
+    return;
+  }
+
   for (i = 0; i < NDIRECT; i++) {
     if (ip->addrs[i]) {
       bfree(ip->dev, ip->addrs[i]);
@@ -498,8 +530,17 @@ stati(struct inode *ip, struct stat *st)
   st->dev = ip->dev;
   st->ino = ip->inum;
   st->type = ip->type;
+  if (ip->type == T_PROC) {
+    if (ip->inum == 9000 || (ip->inum >= 9100 && ip->inum < 9100 + NPROC)) {
+      st->type = T_DIR;
+    } else {
+      st->type = T_FILE;
+    }
+    st->size = 0;
+  } else {
+    st->size = ip->size;
+  }
   st->nlink = ip->nlink;
-  st->size = ip->size;
 }
 
 // Read data from inode.
@@ -549,6 +590,9 @@ writei(struct inode *ip, int user_src, uint64 src, uint off, uint n)
 {
   uint tot, m;
   struct buf *bp;
+
+  if (ip->type == T_PROC)
+    return -1;
 
   if (off > ip->size || off + n < off)
     return -1;
@@ -663,7 +707,7 @@ dirlink(struct inode *dp, char *name, uint inum)
 //   skipelem("a", name) = "", setting name = "a"
 //   skipelem("", name) = skipelem("////", name) = 0
 //
-static char *
+char *
 skipelem(char *path, char *name)
 {
   char *s;
@@ -736,11 +780,8 @@ namei(char *path)
 {
   char name[DIRSIZ];
 
-  // Chặn đường dẫn ProcFS và chuyển hướng sang bộ phân giải Inode ảo
-  if (strncmp(path, "/proc", 5) == 0 || strncmp(path, "proc", 4) == 0) {
-    struct inode *ip = procfs_lookup(path);
-    if (ip != 0)
-      return ip;
+  if (is_procfs_path(path)) {
+    return procfs_lookup(path);
   }
 
   return namex(path, 0, name);
@@ -749,5 +790,9 @@ namei(char *path)
 struct inode *
 nameiparent(char *path, char *name)
 {
+  if (is_procfs_path(path)) {
+    return 0;
+  }
+
   return namex(path, 1, name);
 }

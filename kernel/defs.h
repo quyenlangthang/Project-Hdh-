@@ -57,7 +57,10 @@ void            stati(struct inode*, struct stat*);
 int             writei(struct inode*, int, uint64, uint, uint);
 void            itrunc(struct inode*);
 void            ireclaim(int);
-//added
+struct inode*   iget(uint, uint);
+char*           skipelem(char*, char*);
+// procfs.c
+int             is_procfs_path(const char*);
 int             procfs_read(struct inode*, int, uint64, uint, uint);
 struct inode*   procfs_lookup(char*);
 
