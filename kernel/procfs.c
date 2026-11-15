@@ -221,6 +221,9 @@ procfs_lookup(char *path)
 static int
 procfs_get_dirent_root(int idx, struct dirent *de)
 {
+  if (idx < 0)
+    return 0;
+
   memset(de, 0, sizeof(*de));
   if (idx == 0) {
     de->inum = PROCFS_ROOT_INUM;
@@ -293,6 +296,9 @@ procfs_readdir_root(int user_dst, uint64 dst, uint off, uint n)
 static int
 procfs_get_dirent_pid(int proc_idx, int idx, struct dirent *de)
 {
+  if (idx < 0)
+    return 0;
+
   memset(de, 0, sizeof(*de));
   if (idx == 0) {
     de->inum = PROCFS_PROC_DIR_BASE + proc_idx;
@@ -321,6 +327,16 @@ procfs_get_dirent_pid(int proc_idx, int idx, struct dirent *de)
 static int
 procfs_readdir_pid(int proc_idx, int user_dst, uint64 dst, uint off, uint n)
 {
+  if (proc_idx < 0 || proc_idx >= NPROC)
+    return -1;
+
+  acquire(&proc[proc_idx].lock);
+  if (proc[proc_idx].state == UNUSED) {
+    release(&proc[proc_idx].lock);
+    return 0;
+  }
+  release(&proc[proc_idx].lock);
+
   struct dirent de;
   uint total = 0;
 
