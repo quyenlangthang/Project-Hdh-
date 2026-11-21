@@ -569,41 +569,47 @@ procfs_read_status(int idx, int user_dst, uint64 dst, uint off, uint n)
 
 // Đọc /proc/<pid>/maps
 static int
-procfs_read_maps(int idx, int user_dst, uint64 dst, uint off, uint n)
+procfs_read_pid_maps(int idx, int user_dst, uint64 dst, uint off, uint n)
 {
   if (idx < 0 || idx >= NPROC)
     return -1;
 
+  char *buf = kalloc();
+  if (buf == 0)
+    return -1;
+
   acquire(&proc[idx].lock);
-  if (proc[idx].state == UNUSED) {
+  if (proc[idx].state == UNUSED || proc[idx].pagetable == 0) {
     release(&proc[idx].lock);
+    kfree(buf);
     return 0;
   }
-  uint64 sz = proc[idx].sz;
+
+  int len = vm_proc_maps_snapshot(proc[idx].pagetable, buf, PGSIZE);
   release(&proc[idx].lock);
 
-  char buf[64];
-  int len = 0;
-  char *prefix = "0x0-0x";
-  while (*prefix)
-    buf[len++] = *prefix++;
-  len += procfs_itoa(buf + len, sz);
-  char *suffix = " rwxp\n";
-  while (*suffix)
-    buf[len++] = *suffix++;
-  buf[len] = '\0';
-
-  if (off >= len)
+  if (off >= len) {
+    kfree(buf);
     return 0;
+  }
 
   uint m = len - off;
   if (m > n)
     m = n;
 
-  if (either_copyout(user_dst, dst, buf + off, m) == -1)
+  if (either_copyout(user_dst, dst, buf + off, m) == -1) {
+    kfree(buf);
     return -1;
+  }
 
+  kfree(buf);
   return m;
+}
+
+static int
+procfs_read_maps(int idx, int user_dst, uint64 dst, uint off, uint n)
+{
+  return procfs_read_pid_maps(idx, user_dst, dst, off, n);
 }
 
 // Hàm điều phối đọc chính của hệ thống tệp ảo ProcFS

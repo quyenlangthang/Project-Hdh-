@@ -122,7 +122,76 @@ test_two_level_lookup(void)
     assert_test(0, "Tu choi duong dan khong hop le / vuot cap");
   }
 }
+void
+test_proc_maps(void)
+{
+  char path[64];
+  char buf_before[512];
+  char buf_after[512];
+  int pid = getpid();
 
+  // Tạo đường dẫn "/proc/<pid>/maps" cho tiến trình hiện tại
+  int pos = 0;
+  const char *p1 = "/proc/";
+  const char *p2 = "/maps";
+  while (*p1)
+    path[pos++] = *p1++;
+  if (pid >= 10)
+    path[pos++] = '0' + (pid / 10);
+  path[pos++] = '0' + (pid % 10);
+  while (*p2)
+    path[pos++] = *p2++;
+  path[pos] = '\0';
+
+  // 1. Kiểm tra đọc /proc/<pid>/maps trước khi cấp phát thêm bộ nhớ
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) {
+    printf("FAIL: cannot open %s\n", path);
+    exit(1);
+  }
+  int n1 = read(fd, buf_before, sizeof(buf_before) - 1);
+  close(fd);
+  if (n1 <= 0) {
+    printf("FAIL: empty maps output\n");
+    exit(1);
+  }
+  buf_before[n1] = '\0';
+
+  // 2. Gọi sbrk() mở rộng heap thêm 2 trang (8192 bytes) và kiểm tra thay đổi maps
+  if (sbrk(8192) == (char *)-1) {
+    printf("FAIL: sbrk failed\n");
+    exit(1);
+  }
+
+  fd = open(path, O_RDONLY);
+  if (fd < 0) {
+    printf("FAIL: cannot reopen %s after sbrk\n", path);
+    exit(1);
+  }
+  int n2 = read(fd, buf_after, sizeof(buf_after) - 1);
+  close(fd);
+  if (n2 <= 0) {
+    printf("FAIL: empty maps output after sbrk\n");
+    exit(1);
+  }
+  buf_after[n2] = '\0';
+
+  // Nội dung maps sau khi sbrk() phải thay đổi so với ban đầu
+  if (strcmp(buf_before, buf_after) == 0) {
+    printf("FAIL: maps did not update after sbrk()\n");
+    exit(1);
+  }
+
+  // 3. Kiểm tra trường hợp biên: PID không tồn tại
+  int bad_fd = open("/proc/99999/maps", O_RDONLY);
+  if (bad_fd >= 0) {
+    close(bad_fd);
+    printf("FAIL: /proc/99999/maps should not exist\n");
+    exit(1);
+  }
+
+  printf("PASS: test_proc_maps\n");
+}
 // Kiểm thử duyệt thư mục ảo
 void
 test_readdir(void)
@@ -342,7 +411,7 @@ main(int argc, char *argv[])
   test_dynamic_proc_listing();
   test_read_only_protection();
   test_inode_cache_leak();
-
+  test_proc_maps();
   printf("=======================================\n");
   exit(0);
 }
