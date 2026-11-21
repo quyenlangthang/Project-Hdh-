@@ -16,7 +16,7 @@ jobs:
       - name: Install RISC-V Toolchain and QEMU
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc build-essential
+          sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc qemu-system-riscv build-essential
 
       - name: Compile Kernel and Userspace
         run: |
@@ -48,29 +48,17 @@ jobs:
               stdout=subprocess.PIPE,
               stderr=subprocess.STDOUT,
               text=True,
-              bufsize=1,
           )
 
           time.sleep(2)
-          proc.stdin.write("procfs_test\n")
-          proc.stdin.flush()
+          try:
+              out, _ = proc.communicate(input="procfs_test\n", timeout=20)
+          except subprocess.TimeoutExpired:
+              proc.kill()
+              out, _ = proc.communicate()
 
-          output = []
-          start = time.time()
-          passed = False
-          while time.time() - start < 20:
-              line = proc.stdout.readline()
-              if not line:
-                  break
-              sys.stdout.write(line)
-              output.append(line)
-              if "PASS: test_proc_maps" in line:
-                  passed = True
-                  break
-
-          proc.terminate()
-          full_log = "".join(output)
-          if not passed or "FAIL" in full_log:
+          print(out)
+          if "PASS: test_proc_maps" not in out or "FAIL" in out:
               print("Automated QEMU test failed!")
               sys.exit(1)
           print("All QEMU ProcFS tests PASSED!")
