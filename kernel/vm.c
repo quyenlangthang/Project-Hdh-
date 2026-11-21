@@ -489,3 +489,157 @@ ismapped(pagetable_t pagetable, uint64 va)
   }
   return 0;
 }
+static int
+append_str(char *buf, int max, int len, const char *s)
+{
+  while (*s && len < max - 1) {
+    buf[len++] = *s++;
+  }
+  return len;
+}
+
+static int
+append_hex(char *buf, int max, int len, uint64 val)
+{
+  const char *hex = "0123456789abcdef";
+  char tmp[16];
+  int i = 0;
+
+  if (val == 0) {
+    if (len < max - 1)
+      buf[len++] = '0';
+    return len;
+  }
+
+  while (val > 0 && i < 16) {
+    tmp[i++] = hex[val & 0xf];
+    val >>= 4;
+  }
+  while (i > 0 && len < max - 1) {
+    buf[len++] = tmp[--i];
+  }
+  return len;
+}
+
+static int
+append_map_line(char *buf, int max, int len, uint64 start, uint64 end, int perm)
+{
+  char perms[5];
+  perms[0] = (perm & PTE_R) ? 'r' : '-';
+  perms[1] = (perm & PTE_W) ? 'w' : '-';
+  perms[2] = (perm & PTE_X) ? 'x' : '-';
+  perms[3] = 'p';
+  perms[4] = '\0';
+
+  len = append_str(buf, max, len, "0x");
+  len = append_hex(buf, max, len, start);
+  len = append_str(buf, max, len, "-0x");
+  len = append_hex(buf, max, len, end);
+  len = append_str(buf, max, len, " ");
+  len = append_str(buf, max, len, perms);
+  len = append_str(buf, max, len, "\n");
+  return len;
+}
+
+// Duyệt bảng trang 3 cấp Sv39 của tiến trình, lọc trang user (PTE_U)
+// và gom các trang liền kề có cùng quyền truy cập (rwx).
+int
+vm_proc_maps_snapshot(pagetable_t pagetable, char *buf, int max_len)
+{
+  if (pagetable == 0 || buf == 0 || max_len <= 0)
+    return 0;
+
+  int len = 0;
+  int has_region = 0;
+  uint64 cur_start = 0;
+  uint64 cur_end = 0;
+  int cur_perm = 0;
+
+  // Cấp 2 (VPN[2]: 0..511, mỗi mục phủ 1GB)
+  for (int i2 = 0; i2 < 512; i2++) {
+    pte_t pte2 = pagetable[i2];
+    if ((pte2 & PTE_V) == 0)
+      continue;
+
+    uint64 va2 = (uint64)i2 << 30;
+    if (pte2 & (PTE_R | PTE_W | PTE_X)) {
+      if (pte2 & PTE_U) {
+        int perm = pte2 & (PTE_R | PTE_W | PTE_X);
+        uint64 sz = 1ULL << 30;
+        if (has_region && va2 == cur_end && perm == cur_perm) {
+          cur_end += sz;
+        } else {
+          if (has_region)
+            len =
+              append_map_line(buf, max_len, len, cur_start, cur_end, cur_perm);
+          cur_start = va2;
+          cur_end = va2 + sz;
+          cur_perm = perm;
+          has_region = 1;
+        }
+      }
+      continue;
+    }
+
+    // Cấp 1 (VPN[1]: 0..511, mỗi mục phủ 2MB)
+    pagetable_t pt1 = (pagetable_t)PTE2PA(pte2);
+    for (int i1 = 0; i1 < 512; i1++) {
+      pte_t pte1 = pt1[i1];
+      if ((pte1 & PTE_V) == 0)
+        continue;
+
+      uint64 va1 = va2 | ((uint64)i1 << 21);
+      if (pte1 & (PTE_R | PTE_W | PTE_X)) {
+        if (pte1 & PTE_U) {
+          int perm = pte1 & (PTE_R | PTE_W | PTE_X);
+          uint64 sz = 1ULL << 21;
+          if (has_region && va1 == cur_end && perm == cur_perm) {
+            cur_end += sz;
+          } else {
+            if (has_region)
+              len = append_map_line(buf, max_len, len, cur_start, cur_end,
+                                    cur_perm);
+            cur_start = va1;
+            cur_end = va1 + sz;
+            cur_perm = perm;
+            has_region = 1;
+          }
+        }
+        continue;
+      }
+
+      // Cấp 0 (VPN[0]: 0..511, mỗi trang 4KB)
+      pagetable_t pt0 = (pagetable_t)PTE2PA(pte1);
+      for (int i0 = 0; i0 < 512; i0++) {
+        pte_t pte0 = pt0[i0];
+        if ((pte0 & PTE_V) == 0)
+          continue;
+
+        // Chỉ lấy trang thuộc không gian người dùng (bỏ qua guard page, trampoline, trapframe)
+        if ((pte0 & PTE_U) == 0)
+          continue;
+
+        uint64 va0 = va1 | ((uint64)i0 << 12);
+        int perm = pte0 & (PTE_R | PTE_W | PTE_X);
+        if (has_region && va0 == cur_end && perm == cur_perm) {
+          cur_end += PGSIZE;
+        } else {
+          if (has_region)
+            len =
+              append_map_line(buf, max_len, len, cur_start, cur_end, cur_perm);
+          cur_start = va0;
+          cur_end = va0 + PGSIZE;
+          cur_perm = perm;
+          has_region = 1;
+        }
+      }
+    }
+  }
+
+  if (has_region) {
+    len = append_map_line(buf, max_len, len, cur_start, cur_end, cur_perm);
+  }
+
+  buf[len] = '\0';
+  return len;
+}
