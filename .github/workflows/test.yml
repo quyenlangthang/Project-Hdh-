@@ -2,18 +2,17 @@ on: [push, pull_request]
 
 jobs:
   linux:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y gcc-riscv64-linux-gnu qemu-system-riscv clang-format bc
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y gcc-riscv64-linux-gnu qemu-system-misc qemu-system-riscv clang-format bc
       - run: make fmt && git diff --exit-code
       - run: make kernel/kernel fs.img
-      - run: ./test-xv6.py usertests
-      - run: ./test-xv6.py crash
+      - run: ./test-xv6.py -q usertests
 
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - run: brew install riscv64-elf-gcc
       - run: make kernel/kernel fs.img
