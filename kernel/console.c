@@ -149,6 +149,25 @@ consoleintr(int c)
   acquire(&cons.lock);
 
   switch (c) {
+  case C('C'): // Stop the top utility safely.
+  {
+    extern struct proc proc[NPROC];
+    struct proc *p;
+
+    for (p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if (p->state != UNUSED && strncmp(p->name, "top", sizeof(p->name)) == 0) {
+        p->killed = 1;
+        if (p->state == SLEEPING)
+          p->state = RUNNABLE;
+      }
+      release(&p->lock);
+    }
+    consputc('^');
+    consputc('C');
+    consputc('\n');
+    break;
+  }
   case C('P'): // Print process list.
     procdump();
     break;

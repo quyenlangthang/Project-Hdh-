@@ -1,25 +1,26 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
-#include "user/user.h"
-#include "kernel/fs.h"
 #include "kernel/fcntl.h"
+#include "kernel/fs.h"
+#include "user/user.h"
 
-int
+static int
 is_digits(const char *s)
 {
-  if (s[0] == '\0')
+  if (*s == '\0')
     return 0;
-  for (int i = 0; s[i] != '\0'; i++) {
-    if (s[i] < '0' || s[i] > '9')
+  while (*s) {
+    if (*s < '0' || *s > '9')
       return 0;
+    s++;
   }
   return 1;
 }
 
-int
+static int
 starts_with(const char *s, const char *prefix)
 {
-  while (*prefix != '\0') {
+  while (*prefix) {
     if (*s != *prefix)
       return 0;
     s++;
@@ -28,23 +29,21 @@ starts_with(const char *s, const char *prefix)
   return 1;
 }
 
-void
-parse_field(const char *buf, const char *key, char *out, int max_len)
+static void
+parse_field(const char *buf, const char *key, char *out, int max)
 {
-  int klen = strlen(key);
   const char *p = buf;
+  int klen = strlen(key);
 
   out[0] = '\0';
-  while (*p != '\0') {
+  while (*p) {
     if ((p == buf || *(p - 1) == '\n') && starts_with(p, key)) {
       p += klen;
-      while (*p == ' ' || *p == '\t') {
+      while (*p == ' ' || *p == '\t')
         p++;
-      }
       int i = 0;
-      while (*p != '\0' && *p != '\n' && i < max_len - 1) {
+      while (*p && *p != '\n' && i < max - 1)
         out[i++] = *p++;
-      }
       out[i] = '\0';
       return;
     }
@@ -52,59 +51,58 @@ parse_field(const char *buf, const char *key, char *out, int max_len)
   }
 }
 
-void
-print_col(const char *s, int width)
+static void
+print_col(const char *text, int width)
 {
-  int len = strlen(s);
-  printf("%s", s);
-  for (int i = len; i < width; i++) {
+  int len = strlen(text);
+
+  printf("%s", text);
+  while (len++ < width)
     printf(" ");
-  }
 }
 
-void
-print_proc_info(const char *pid_str)
+static void
+print_process(const char *pid)
 {
-  char path[64];
   char buf[256];
-  char pid[16], ppid[16], state[16], size[16], name[32];
+  char name[32], ppid[16], state[16], size[16];
+  int pos = 0, fd, n;
 
-  int pos = 0;
+  char status_path[64];
+  pos = 0;
   const char *prefix = "/proc/";
   const char *suffix = "/status";
-  for (int i = 0; prefix[i] != '\0'; i++)
-    path[pos++] = prefix[i];
-  for (int i = 0; pid_str[i] != '\0'; i++)
-    path[pos++] = pid_str[i];
-  for (int i = 0; suffix[i] != '\0'; i++)
-    path[pos++] = suffix[i];
-  path[pos] = '\0';
+  for (int i = 0; prefix[i]; i++)
+    status_path[pos++] = prefix[i];
+  for (int i = 0; pid[i]; i++)
+    status_path[pos++] = pid[i];
+  for (int i = 0; suffix[i]; i++)
+    status_path[pos++] = suffix[i];
+  status_path[pos] = '\0';
 
-  int fd = open(path, O_RDONLY);
+  fd = open(status_path, O_RDONLY);
   if (fd < 0)
     return;
-
-  int n = read(fd, buf, sizeof(buf) - 1);
+  n = read(fd, buf, sizeof(buf) - 1);
   close(fd);
   if (n <= 0)
     return;
   buf[n] = '\0';
 
-  parse_field(buf, "Pid:", pid, sizeof(pid));
   parse_field(buf, "PPid:", ppid, sizeof(ppid));
   parse_field(buf, "State:", state, sizeof(state));
   parse_field(buf, "Size:", size, sizeof(size));
   parse_field(buf, "Name:", name, sizeof(name));
 
-  print_col(pid, 6);
-  print_col(ppid, 6);
-  print_col(state, 11);
-  print_col(size, 10);
+  print_col(pid, 8);
+  print_col(ppid, 8);
+  print_col(state, 12);
+  print_col(size, 12);
   printf("%s\n", name);
 }
 
 int
-main(int argc, char *argv[])
+main(void)
 {
   int fd;
   struct dirent de;
@@ -116,22 +114,19 @@ main(int argc, char *argv[])
     exit(1);
   }
 
-  print_col("PID", 6);
-  print_col("PPID", 6);
-  print_col("STATE", 11);
-  print_col("SIZE", 10);
+  print_col("PID", 8);
+  print_col("PPID", 8);
+  print_col("STATE", 12);
+  print_col("SIZE", 12);
   printf("NAME\n");
 
   while (read(fd, &de, sizeof(de)) == sizeof(de)) {
     if (de.inum == 0)
       continue;
-
     memmove(name, de.name, DIRSIZ);
     name[DIRSIZ] = '\0';
-
-    if (is_digits(name)) {
-      print_proc_info(name);
-    }
+    if (is_digits(name))
+      print_process(name);
   }
 
   close(fd);

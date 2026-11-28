@@ -369,7 +369,6 @@ iput(struct inode *ip)
   if (ip->type == T_PROC) {
     if (ip->ref == 1) {
       ip->valid = 0;
-      ip->type = 0;
       ip->ref = 0;
     } else {
       ip->ref--;

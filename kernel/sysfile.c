@@ -129,9 +129,6 @@ sys_link(void)
   if (argstr(0, old, MAXPATH) < 0 || argstr(1, new, MAXPATH) < 0)
     return -1;
 
-  if (is_procfs_path(old) || is_procfs_path(new))
-    return -1;
-
   begin_op();
   if ((ip = namei(old)) == 0) {
     end_op();
@@ -139,7 +136,7 @@ sys_link(void)
   }
 
   ilock(ip);
-  if (ip->type == T_DIR || ip->type == T_PROC) {
+  if (ip->type == T_DIR) {
     iunlockput(ip);
     end_op();
     return -1;
@@ -210,9 +207,6 @@ sys_unlink(void)
   uint off;
 
   if (argstr(0, path, MAXPATH) < 0)
-    return -1;
-
-  if (is_procfs_path(path))
     return -1;
 
   begin_op();
@@ -344,10 +338,8 @@ sys_open(void)
   if ((n = argstr(0, path, MAXPATH)) < 0)
     return -1;
 
-  if (is_procfs_path(path)) {
-    if (omode != O_RDONLY || (omode & (O_WRONLY | O_RDWR | O_CREATE | O_TRUNC)))
-      return -1;
-  }
+  if ((omode & O_CREATE) && procfs_is_path(path))
+    return -1;
 
   begin_op();
 
@@ -363,13 +355,10 @@ sys_open(void)
       return -1;
     }
     ilock(ip);
-    if (ip->type == T_PROC) {
-      if (omode != O_RDONLY ||
-          (omode & (O_WRONLY | O_RDWR | O_CREATE | O_TRUNC))) {
-        iunlockput(ip);
-        end_op();
-        return -1;
-      }
+    if (ip->type == T_PROC && omode != O_RDONLY) {
+      iunlockput(ip);
+      end_op();
+      return -1;
     }
     if (ip->type == T_DIR && omode != O_RDONLY) {
       iunlockput(ip);
@@ -419,14 +408,8 @@ sys_mkdir(void)
   char path[MAXPATH];
   struct inode *ip;
 
-  if (argstr(0, path, MAXPATH) < 0)
-    return -1;
-
-  if (is_procfs_path(path))
-    return -1;
-
   begin_op();
-  if ((ip = create(path, T_DIR, 0, 0)) == 0) {
+  if (argstr(0, path, MAXPATH) < 0 || (ip = create(path, T_DIR, 0, 0)) == 0) {
     end_op();
     return -1;
   }
@@ -442,16 +425,11 @@ sys_mknod(void)
   char path[MAXPATH];
   int major, minor;
 
+  begin_op();
   argint(1, &major);
   argint(2, &minor);
-  if (argstr(0, path, MAXPATH) < 0)
-    return -1;
-
-  if (is_procfs_path(path))
-    return -1;
-
-  begin_op();
-  if ((ip = create(path, T_DEVICE, major, minor)) == 0) {
+  if ((argstr(0, path, MAXPATH)) < 0 ||
+      (ip = create(path, T_DEVICE, major, minor)) == 0) {
     end_op();
     return -1;
   }
