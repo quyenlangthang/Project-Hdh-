@@ -18,6 +18,7 @@
 #define PROCFS_PROC_DIR_BASE  9100
 #define PROCFS_STATUS_BASE    9200
 #define PROCFS_MAPS_BASE      9300
+#define PROCFS_NICE_BASE      9400
 
 extern uint ticks;
 extern struct spinlock tickslock;
@@ -40,6 +41,14 @@ int
 procfs_is_path(char *path)
 {
   return is_procfs_path(path);
+}
+
+int
+procfs_is_writable(struct inode *ip)
+{
+  if (ip == 0 || ip->type != T_PROC)
+    return 0;
+  return (ip->inum >= PROCFS_NICE_BASE && ip->inum < PROCFS_NICE_BASE + NPROC);
 }
 
 // So sánh 2 chuỗi ký tự
@@ -134,6 +143,16 @@ procfs_append(char *buf, int *len, int max, char *text)
 {
   while (*text && *len < max - 1)
     buf[(*len)++] = *text++;
+}
+
+static int
+procfs_proc_alive(int idx, int pid)
+{
+  acquire(&proc[idx].lock);
+  int alive = (proc[idx].state != UNUSED && proc[idx].state != ZOMBIE &&
+               proc[idx].pid == pid);
+  release(&proc[idx].lock);
+  return alive;
 }
 
 // Tìm vị trí process trong mảng proc[] theo pid. Trả về idx hoặc -1 nếu không tồn tại.
@@ -234,14 +253,14 @@ procfs_lookup(char *path)
     if (procfs_streq(name2, "status") == 0)
       return procfs_get_inode(PROCFS_STATUS_BASE + idx);
     if (procfs_streq(name2, "maps") == 0) {
-      acquire(&proc[idx].lock);
-      if (proc[idx].state == UNUSED || proc[idx].state == ZOMBIE ||
-          proc[idx].pid != pid) {
-        release(&proc[idx].lock);
+      if (!procfs_proc_alive(idx, pid))
         return 0;
-      }
-      release(&proc[idx].lock);
       return procfs_get_inode(PROCFS_MAPS_BASE + idx);
+    }
+    if (procfs_streq(name2, "nice") == 0) {
+      if (!procfs_proc_alive(idx, pid))
+        return 0;
+      return procfs_get_inode(PROCFS_NICE_BASE + idx);
     }
     return 0;
   }
@@ -376,6 +395,11 @@ procfs_get_dirent_pid(int proc_idx, int idx, struct dirent *de)
   if (idx == 3) {
     de->inum = PROCFS_MAPS_BASE + proc_idx;
     safestrcpy(de->name, "maps", sizeof(de->name));
+    return 1;
+  }
+  if (idx == 4) {
+    de->inum = PROCFS_NICE_BASE + proc_idx;
+    safestrcpy(de->name, "nice", sizeof(de->name));
     return 1;
   }
   return 0;
@@ -621,6 +645,122 @@ procfs_read_maps(int idx, int user_dst, uint64 dst, uint off, uint n)
   return procfs_read_pid_maps(idx, user_dst, dst, off, n);
 }
 
+static int
+procfs_is_ws(char c)
+{
+  return (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+}
+
+// Đọc /proc/<pid>/nice
+static int
+procfs_read_pid_nice(int idx, int user_dst, uint64 dst, uint off, uint n)
+{
+  if (idx < 0 || idx >= NPROC)
+    return -1;
+
+  acquire(&proc[idx].lock);
+  if (proc[idx].state == UNUSED || proc[idx].state == ZOMBIE) {
+    release(&proc[idx].lock);
+    return 0;
+  }
+  int nice = proc[idx].nice;
+  release(&proc[idx].lock);
+
+  char buf[16];
+  int len = 0;
+  if (nice < 0) {
+    buf[len++] = '-';
+    len += procfs_itoa(buf + len, (uint64)(-(long)nice));
+  } else {
+    len += procfs_itoa(buf + len, (uint64)nice);
+  }
+  buf[len++] = '\n';
+  buf[len] = '\0';
+
+  if (off >= len)
+    return 0;
+
+  uint m = len - off;
+  if (m > n)
+    m = n;
+
+  if (either_copyout(user_dst, dst, buf + off, m) == -1)
+    return -1;
+
+  return m;
+}
+
+// Ghi /proc/<pid>/nice (chấp nhận giá trị từ -20 đến 19)
+static int
+procfs_write_pid_nice(int idx, int user_src, uint64 src, uint off, uint n)
+{
+  char kbuf[32];
+  char *p;
+  int neg = 0;
+  int val = 0;
+
+  if (idx < 0 || idx >= NPROC)
+    return -1;
+  if (n == 0)
+    return off > 0 ? 0 : -1;
+  if (n >= sizeof(kbuf))
+    return -1;
+  if (either_copyin(kbuf, user_src, src, n) == -1)
+    return -1;
+  kbuf[n] = '\0';
+
+  p = kbuf;
+  while (*p && procfs_is_ws(*p))
+    p++;
+
+  // Cho phép phần newline kết thúc do lệnh `echo` tách thành 2 lần write()
+  if (*p == '\0') {
+    if (off == 0)
+      return -1;
+    acquire(&proc[idx].lock);
+    int alive = (proc[idx].state != UNUSED && proc[idx].state != ZOMBIE);
+    release(&proc[idx].lock);
+    return alive ? (int)n : -1;
+  }
+
+  if (*p == '-') {
+    neg = 1;
+    p++;
+  } else if (*p == '+') {
+    p++;
+  }
+
+  if (*p < '0' || *p > '9')
+    return -1;
+
+  while (*p >= '0' && *p <= '9') {
+    val = val * 10 + (*p - '0');
+    if (val > 100)
+      return -1;
+    p++;
+  }
+
+  while (*p && procfs_is_ws(*p))
+    p++;
+  if (*p != '\0')
+    return -1;
+
+  int new_nice = neg ? -val : val;
+  if (new_nice < -20 || new_nice > 19)
+    return -1;
+
+  acquire(&proc[idx].lock);
+  if (proc[idx].state == UNUSED || proc[idx].state == ZOMBIE) {
+    release(&proc[idx].lock);
+    return -1;
+  }
+  proc[idx].nice = new_nice;
+  proc[idx].age = 0;
+  release(&proc[idx].lock);
+
+  return (int)n;
+}
+
 // Hàm điều phối đọc chính của hệ thống tệp ảo ProcFS
 int
 procfs_read(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
@@ -649,6 +789,21 @@ procfs_read(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
   if (ip->inum >= PROCFS_MAPS_BASE && ip->inum < PROCFS_MAPS_BASE + NPROC) {
     int idx = ip->inum - PROCFS_MAPS_BASE;
     return procfs_read_maps(idx, user_dst, dst, off, n);
+  }
+  if (ip->inum >= PROCFS_NICE_BASE && ip->inum < PROCFS_NICE_BASE + NPROC) {
+    int idx = ip->inum - PROCFS_NICE_BASE;
+    return procfs_read_pid_nice(idx, user_dst, dst, off, n);
+  }
+  return -1;
+}
+
+// Hàm điều phối ghi của hệ thống tệp ảo ProcFS
+int
+procfs_write(struct inode *ip, int user_src, uint64 src, uint off, uint n)
+{
+  if (ip->inum >= PROCFS_NICE_BASE && ip->inum < PROCFS_NICE_BASE + NPROC) {
+    int idx = ip->inum - PROCFS_NICE_BASE;
+    return procfs_write_pid_nice(idx, user_src, src, off, n);
   }
   return -1;
 }

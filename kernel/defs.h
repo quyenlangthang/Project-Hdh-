@@ -62,6 +62,8 @@ char*           skipelem(char*, char*);
 // procfs.c
 int             is_procfs_path(const char*);
 int             procfs_read(struct inode*, int, uint64, uint, uint);
+int             procfs_write(struct inode*, int, uint64, uint, uint);
+int             procfs_is_writable(struct inode*);
 struct inode*   procfs_lookup(char*);
 int             procfs_is_path(char*);
 int             procfs_read_processes(int, uint64, uint, uint);

@@ -89,6 +89,8 @@ struct proc {
   int xstate;           // Exit status to be returned to parent's wait
   int pid;              // Process ID
   uint64 rtime;         // CPU running time (timer ticks)
+  int nice;             // Scheduling priority (-20 highest .. 19 lowest)
+  int age;              // Aging counter to prevent starvation
 
   // wait_lock must be held when using this:
   struct proc *parent; // Parent process

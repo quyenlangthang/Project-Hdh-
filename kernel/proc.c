@@ -125,6 +125,8 @@ found:
   p->pid = allocpid();
   p->state = USED;
   p->rtime = 0;
+  p->nice = 0;
+  p->age = 0;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -169,6 +171,8 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->rtime = 0;
+  p->nice = 0;
+  p->age = 0;
   p->state = UNUSED;
 }
 
@@ -263,11 +267,17 @@ kfork(void)
   int i, pid;
   struct proc *np;
   struct proc *p = myproc();
+  int pnice;
+
+  acquire(&p->lock);
+  pnice = p->nice;
+  release(&p->lock);
 
   // Allocate process.
   if ((np = allocproc()) == 0) {
     return -1;
   }
+  np->nice = pnice;
 
   // Copy user memory from parent to child.
   if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) {
@@ -432,6 +442,7 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
+  int last = 0;
 
   c->proc = 0;
   for (;;) {
@@ -444,15 +455,37 @@ scheduler(void)
     intr_off();
 
     int found = 0;
-    for (p = proc; p < &proc[NPROC]; p++) {
+    int any_runnable = 0;
+    struct proc *best = 0;
+    int best_score = 0;
+
+    // Pass 1: select the RUNNABLE process with lowest (nice - age),
+    // acquiring only one process lock at a time to prevent deadlocks.
+    for (int step = 0; step < NPROC; step++) {
+      int idx = (last + 1 + step) % NPROC;
+      p = &proc[idx];
       acquire(&p->lock);
       if (p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
+        any_runnable = 1;
+        int score = p->nice - p->age;
+        if (p->age < 100)
+          p->age++;
+        if (best == 0 || score < best_score) {
+          best = p;
+          best_score = score;
+        }
+      }
+      release(&p->lock);
+    }
+
+    // Pass 2: re-validate and dispatch the chosen process.
+    if (best != 0) {
+      acquire(&best->lock);
+      if (best->state == RUNNABLE) {
+        best->age = 0;
+        best->state = RUNNING;
+        c->proc = best;
+        swtch(&c->context, &best->context);
 
         // Don't re-enable interrupts on release.
         mycpu()->intena = 0;
@@ -461,10 +494,12 @@ scheduler(void)
         // It should have changed its p->state before coming back.
         c->proc = 0;
         found = 1;
+        last = best - proc;
       }
-      release(&p->lock);
+      release(&best->lock);
     }
-    if (found == 0) {
+
+    if (found == 0 && any_runnable == 0) {
       // nothing to run; stop running on this core until an interrupt.
       asm volatile("wfi");
     }
@@ -729,6 +764,21 @@ proc_status_put_uint(char *buf, int max, int pos, uint64 value)
 }
 
 static int
+proc_status_put_int(char *buf, int max, int pos, int value)
+{
+  uint64 uval;
+  if (value < 0) {
+    if (pos + 1 >= max)
+      return -1;
+    buf[pos++] = '-';
+    uval = (uint64)(-(long)value);
+  } else {
+    uval = (uint64)value;
+  }
+  return proc_status_put_uint(buf, max, pos, uval);
+}
+
+static int
 proc_status_put_str(char *buf, int max, int pos, const char *str)
 {
   while (*str) {
@@ -749,6 +799,7 @@ proc_get_status_str(int pid, char *buf, int max)
   enum procstate state;
   uint64 sz;
   uint64 rtime;
+  int nice;
   int ppid;
   int killed;
   char name[sizeof(p->name)];
@@ -764,6 +815,7 @@ proc_get_status_str(int pid, char *buf, int max)
       state = p->state;
       sz = p->sz;
       rtime = p->rtime;
+      nice = p->nice;
       ppid = p->parent ? p->parent->pid : 0;
       killed = p->killed;
       safestrcpy(name, p->name, sizeof(name));
@@ -817,6 +869,12 @@ found:
   if (pos < 0)
     return -1;
   pos = proc_status_put_uint(buf, max, pos, rtime);
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_str(buf, max, pos, "\nNice:\t");
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_int(buf, max, pos, nice);
   if (pos < 0)
     return -1;
   pos = proc_status_put_str(buf, max, pos, "\n");

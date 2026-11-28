@@ -232,7 +232,7 @@ test_readdir(void)
 
   has_dot = 0;
   has_dotdot = 0;
-  int has_status = 0, has_maps = 0;
+  int has_status = 0, has_maps = 0, has_nice = 0;
 
   while (read(fd, &de, sizeof(de)) == sizeof(de)) {
     if (strcmp(de.name, ".") == 0)
@@ -243,11 +243,13 @@ test_readdir(void)
       has_status = 1;
     else if (strcmp(de.name, "maps") == 0)
       has_maps = 1;
+    else if (strcmp(de.name, "nice") == 0)
+      has_nice = 1;
   }
   close(fd);
 
-  int pid1_ok = has_dot && has_dotdot && has_status && has_maps;
-  assert_test(pid1_ok, "Duyet thu muc /proc/1 (., .., status, maps)");
+  int pid1_ok = has_dot && has_dotdot && has_status && has_maps && has_nice;
+  assert_test(pid1_ok, "Duyet thu muc /proc/1 (., .., status, maps, nice)");
 }
 
 // Kiểm thử từ chối các thao tác ghi / sửa đổi trên ProcFS và VFS hooks
@@ -398,10 +400,9 @@ test_dynamic_proc_listing(void)
 }
 
 static void
-build_proc_status_path(int pid, char *out)
+build_proc_entry_path(int pid, const char *entry, char *out)
 {
   const char *prefix = "/proc/";
-  const char *suffix = "/status";
   char digits[16];
   int d = 0, pos = 0;
 
@@ -420,8 +421,9 @@ build_proc_status_path(int pid, char *out)
   while (d > 0)
     out[pos++] = digits[--d];
 
-  while (*suffix)
-    out[pos++] = *suffix++;
+  out[pos++] = '/';
+  while (*entry)
+    out[pos++] = *entry++;
   out[pos] = '\0';
 }
 
@@ -432,7 +434,7 @@ read_proc_rtime(int pid)
   char buf[256];
   int fd, n;
 
-  build_proc_status_path(pid, path);
+  build_proc_entry_path(pid, "status", path);
   fd = open(path, O_RDONLY);
   if (fd < 0)
     return -1;
@@ -547,6 +549,172 @@ test_proc_rtime(void)
   assert_test(smp_ok, "Cap nhat rtime doc lap cho nhieu tien trinh SMP");
 }
 
+static int
+read_proc_nice(int pid, int *out_val)
+{
+  char path[64];
+  char buf[32];
+  int fd, n;
+
+  build_proc_entry_path(pid, "nice", path);
+  fd = open(path, O_RDONLY);
+  if (fd < 0)
+    return -1;
+  n = read(fd, buf, sizeof(buf) - 1);
+  close(fd);
+  if (n <= 0)
+    return -1;
+  buf[n] = '\0';
+
+  int i = 0, neg = 0, val = 0;
+  if (buf[i] == '-') {
+    neg = 1;
+    i++;
+  }
+  if (buf[i] < '0' || buf[i] > '9')
+    return -1;
+  while (buf[i] >= '0' && buf[i] <= '9') {
+    val = val * 10 + (buf[i] - '0');
+    i++;
+  }
+  *out_val = neg ? -val : val;
+  return 0;
+}
+
+static int
+write_proc_nice_flags(int pid, const char *str, int flags)
+{
+  char path[64];
+  build_proc_entry_path(pid, "nice", path);
+  int fd = open(path, flags);
+  if (fd < 0)
+    return -1;
+  int len = strlen(str);
+  int w = write(fd, str, len);
+  close(fd);
+  return (w == len) ? 0 : -1;
+}
+
+void
+test_proc_nice(void)
+{
+  struct stat st;
+  int fd = open("/proc/1/nice", O_RDONLY);
+  int lookup_ok =
+    (fd >= 0 && fstat(fd, &st) == 0 && st.type == T_FILE && st.ino == 9400);
+  if (fd >= 0)
+    close(fd);
+  assert_test(lookup_ok, "Lookup /proc/1/nice va xac dinh T_FILE (ino 9400)");
+
+  int mypid = getpid();
+  int val = -999;
+  int def_ok = (read_proc_nice(mypid, &val) == 0 && val == 0);
+  assert_test(def_ok, "Doc gia tri nice mac dinh = 0");
+
+  // Mô phỏng ghi qua echo redirection (O_WRONLY | O_CREATE | O_TRUNC) với số âm & dương
+  int rw_ok = 1;
+  if (write_proc_nice_flags(mypid, "-10\n", O_WRONLY | O_CREATE | O_TRUNC) <
+        0 ||
+      read_proc_nice(mypid, &val) < 0 || val != -10)
+    rw_ok = 0;
+  if (write_proc_nice_flags(mypid, "19\n", O_WRONLY | O_CREATE | O_TRUNC) < 0 ||
+      read_proc_nice(mypid, &val) < 0 || val != 19)
+    rw_ok = 0;
+
+  // Kiểm tra hành vi 2 lần write() của user/echo.c: write("7") rồi write("\n")
+  char path[64];
+  build_proc_entry_path(mypid, "nice", path);
+  int efd = open(path, O_WRONLY | O_CREATE | O_TRUNC);
+  if (efd < 0 || write(efd, "7", 1) != 1 || write(efd, "\n", 1) != 1)
+    rw_ok = 0;
+  if (efd >= 0)
+    close(efd);
+  if (read_proc_nice(mypid, &val) < 0 || val != 7)
+    rw_ok = 0;
+  assert_test(rw_ok, "Cap nhat /proc/<pid>/nice giong echo (> va so am/duong)");
+
+  // Kiểm tra từ chối tham số sai biên / sai định dạng / PID không tồn tại
+  int inv_ok = 1;
+  if (write_proc_nice_flags(mypid, "20\n", O_WRONLY) == 0)
+    inv_ok = 0;
+  if (write_proc_nice_flags(mypid, "-21\n", O_WRONLY) == 0)
+    inv_ok = 0;
+  if (write_proc_nice_flags(mypid, "abc\n", O_WRONLY) == 0)
+    inv_ok = 0;
+  if (write_proc_nice_flags(mypid, "5xyz\n", O_WRONLY) == 0)
+    inv_ok = 0;
+  if (read_proc_nice(mypid, &val) < 0 || val != 7)
+    inv_ok = 0;
+  int bad_pid = open("/proc/99999/nice", O_WRONLY | O_CREATE | O_TRUNC);
+  if (bad_pid >= 0) {
+    close(bad_pid);
+    inv_ok = 0;
+  }
+  assert_test(inv_ok,
+              "Tu choi nice ngoai bien (-20..19), sai cu phap va PID ao");
+
+  // Khôi phục nice = 0 trước khi chạy test lập lịch
+  write_proc_nice_flags(mypid, "0\n", O_WRONLY);
+
+  // Kiểm thử bộ lập lịch ưu tiên (3 worker nice=-15 vs 3 worker nice=15)
+  // Dùng 6 worker (> 4 CPU) để tạo cạnh tranh CPU thật trên cả CPUS=1 và CPUS=4.
+  int gate[2], res[2];
+  int sched_ok = 0;
+  if (pipe(gate) == 0 && pipe(res) == 0) {
+    for (int i = 0; i < 6; i++) {
+      int is_high = (i < 3);
+      int pid = fork();
+      if (pid == 0) {
+        close(gate[1]);
+        close(res[0]);
+        write_proc_nice_flags(getpid(), is_high ? "-15\n" : "15\n", O_WRONLY);
+        char go = 0;
+        read(gate[0], &go, 1);
+        close(gate[0]);
+
+        volatile uint64 work = 0;
+        int start = uptime();
+        while (uptime() - start < 15) {
+          work++;
+        }
+        (void)work;
+
+        int msg[2];
+        msg[0] = is_high;
+        msg[1] = read_proc_rtime(getpid());
+        write(res[1], msg, sizeof(msg));
+        close(res[1]);
+        exit(0);
+      }
+    }
+    close(gate[0]);
+    close(res[1]);
+    for (int i = 0; i < 6; i++)
+      write(gate[1], "g", 1);
+    close(gate[1]);
+
+    int sum_high = 0, sum_low = 0;
+    int all_ran = 1;
+    for (int i = 0; i < 6; i++) {
+      int msg[2] = {-1, -1};
+      if (read(res[0], msg, sizeof(msg)) != sizeof(msg) || msg[1] < 0)
+        all_ran = 0;
+      else if (msg[0])
+        sum_high += msg[1];
+      else
+        sum_low += msg[1];
+    }
+    close(res[0]);
+    for (int i = 0; i < 6; i++)
+      wait(0);
+
+    if (all_ran && sum_high > sum_low && sum_low >= 0)
+      sched_ok = 1;
+  }
+  assert_test(sched_ok,
+              "Bo lap lich scheduler uu tien tien trinh co nice thap");
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -567,6 +735,7 @@ main(int argc, char *argv[])
   test_inode_cache_leak();
   test_proc_maps();
   test_proc_rtime();
+  test_proc_nice();
   printf("=======================================\n");
   exit(0);
 }

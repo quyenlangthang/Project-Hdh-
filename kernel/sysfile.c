@@ -344,14 +344,9 @@ sys_open(void)
   if ((n = argstr(0, path, MAXPATH)) < 0)
     return -1;
 
-  if (is_procfs_path(path)) {
-    if (omode != O_RDONLY || (omode & (O_WRONLY | O_RDWR | O_CREATE | O_TRUNC)))
-      return -1;
-  }
-
   begin_op();
 
-  if (omode & O_CREATE) {
+  if ((omode & O_CREATE) && !is_procfs_path(path)) {
     ip = create(path, T_FILE, 0, 0);
     if (ip == 0) {
       end_op();
@@ -364,8 +359,13 @@ sys_open(void)
     }
     ilock(ip);
     if (ip->type == T_PROC) {
-      if (omode != O_RDONLY ||
-          (omode & (O_WRONLY | O_RDWR | O_CREATE | O_TRUNC))) {
+      int allowed = 0;
+      if (omode == O_RDONLY) {
+        allowed = 1;
+      } else if (procfs_is_writable(ip) && (omode & (O_WRONLY | O_RDWR))) {
+        allowed = 1;
+      }
+      if (!allowed) {
         iunlockput(ip);
         end_op();
         return -1;
