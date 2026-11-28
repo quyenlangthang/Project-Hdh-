@@ -173,6 +173,15 @@ clockintr()
     release(&tickslock);
   }
 
+  // Update per-process CPU running time for Live CPU % tracking.
+  struct proc *p = myproc();
+  if (p != 0) {
+    acquire(&p->lock);
+    if (p->state == RUNNING)
+      p->rtime++;
+    release(&p->lock);
+  }
+
   // ask for the next timer interrupt. this also clears
   // the interrupt request. 1000000 is about a tenth
   // of a second.

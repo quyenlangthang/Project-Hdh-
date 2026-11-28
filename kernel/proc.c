@@ -124,6 +124,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->rtime = 0;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -167,6 +168,7 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  p->rtime = 0;
   p->state = UNUSED;
 }
 
@@ -746,6 +748,7 @@ proc_get_status_str(int pid, char *buf, int max)
   struct proc *p;
   enum procstate state;
   uint64 sz;
+  uint64 rtime;
   int ppid;
   int killed;
   char name[sizeof(p->name)];
@@ -760,6 +763,7 @@ proc_get_status_str(int pid, char *buf, int max)
     if (p->state != UNUSED && p->pid == pid) {
       state = p->state;
       sz = p->sz;
+      rtime = p->rtime;
       ppid = p->parent ? p->parent->pid : 0;
       killed = p->killed;
       safestrcpy(name, p->name, sizeof(name));
@@ -807,6 +811,12 @@ found:
   if (pos < 0)
     return -1;
   pos = proc_status_put_uint(buf, max, pos, killed);
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_str(buf, max, pos, "\nRtime:\t");
+  if (pos < 0)
+    return -1;
+  pos = proc_status_put_uint(buf, max, pos, rtime);
   if (pos < 0)
     return -1;
   pos = proc_status_put_str(buf, max, pos, "\n");

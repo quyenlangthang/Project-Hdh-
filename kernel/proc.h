@@ -88,6 +88,7 @@ struct proc {
   int killed;           // If non-zero, have been killed
   int xstate;           // Exit status to be returned to parent's wait
   int pid;              // Process ID
+  uint64 rtime;         // CPU running time (timer ticks)
 
   // wait_lock must be held when using this:
   struct proc *parent; // Parent process
@@ -110,5 +111,6 @@ struct procinfo {
   enum procstate state;
   uint64 sz; // Process memory size in bytes
   int killed;
+  uint64 rtime;  // CPU running time (timer ticks)
   char name[16]; // Same size as proc.name
 };

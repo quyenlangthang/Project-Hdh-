@@ -26,6 +26,7 @@ procinfo_get(int pid, struct procinfo *out)
       out->state = p->state;
       out->sz = p->sz;
       out->killed = p->killed;
+      out->rtime = p->rtime;
       safestrcpy(out->name, p->name, sizeof(out->name));
       found = 1;
     }

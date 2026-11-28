@@ -397,6 +397,156 @@ test_dynamic_proc_listing(void)
   assert_test(dynamic_ok, "Sinh danh sach dong /proc theo p->state != UNUSED");
 }
 
+static void
+build_proc_status_path(int pid, char *out)
+{
+  const char *prefix = "/proc/";
+  const char *suffix = "/status";
+  char digits[16];
+  int d = 0, pos = 0;
+
+  while (*prefix)
+    out[pos++] = *prefix++;
+
+  if (pid == 0) {
+    digits[d++] = '0';
+  } else {
+    int tmp = pid;
+    while (tmp > 0 && d < (int)sizeof(digits)) {
+      digits[d++] = '0' + (tmp % 10);
+      tmp /= 10;
+    }
+  }
+  while (d > 0)
+    out[pos++] = digits[--d];
+
+  while (*suffix)
+    out[pos++] = *suffix++;
+  out[pos] = '\0';
+}
+
+static int
+read_proc_rtime(int pid)
+{
+  char path[64];
+  char buf[256];
+  int fd, n;
+
+  build_proc_status_path(pid, path);
+  fd = open(path, O_RDONLY);
+  if (fd < 0)
+    return -1;
+
+  n = read(fd, buf, sizeof(buf) - 1);
+  close(fd);
+  if (n <= 0)
+    return -1;
+  buf[n] = '\0';
+
+  const char *key = "Rtime:";
+  for (int i = 0; buf[i] != '\0'; i++) {
+    if (i == 0 || buf[i - 1] == '\n') {
+      int j = 0;
+      while (key[j] && buf[i + j] == key[j])
+        j++;
+      if (key[j] == '\0') {
+        int k = i + j;
+        while (buf[k] == ' ' || buf[k] == '\t')
+          k++;
+        if (buf[k] < '0' || buf[k] > '9')
+          return -1;
+        int val = 0;
+        while (buf[k] >= '0' && buf[k] <= '9') {
+          val = val * 10 + (buf[k] - '0');
+          k++;
+        }
+        return val;
+      }
+    }
+  }
+  return -1;
+}
+
+void
+test_proc_rtime(void)
+{
+  int mypid = getpid();
+  int rt_before = read_proc_rtime(mypid);
+  int bad_rt = read_proc_rtime(99999);
+  assert_test(rt_before >= 0 && bad_rt < 0,
+              "Doc truong Rtime trong /proc/<pid>/status");
+
+  // Đốt CPU trong vài timer ticks để xác nhận clockintr cập nhật p->rtime
+  volatile uint64 spin = 0;
+  int t0 = uptime();
+  while (uptime() - t0 < 6) {
+    spin++;
+  }
+  (void)spin;
+  int rt_after = read_proc_rtime(mypid);
+  assert_test(rt_after > rt_before, "rtime tang khi tien trinh chay CPU");
+
+  // Kiểm tra reset rtime = 0 khi allocproc() và không tăng khi đang SLEEPING
+  int pfd[2];
+  int sleep_ok = 0;
+  if (pipe(pfd) == 0) {
+    int cpid = fork();
+    if (cpid == 0) {
+      close(pfd[0]);
+      write(pfd[1], "r", 1);
+      close(pfd[1]);
+      pause(6);
+      exit(0);
+    } else if (cpid > 0) {
+      char ch = 0;
+      close(pfd[1]);
+      read(pfd[0], &ch, 1);
+      close(pfd[0]);
+      pause(1);
+      int rt_s1 = read_proc_rtime(cpid);
+      pause(3);
+      int rt_s2 = read_proc_rtime(cpid);
+      wait(0);
+      if (rt_s1 >= 0 && rt_s1 <= 2 && rt_s2 >= rt_s1 && (rt_s2 - rt_s1) <= 1) {
+        sleep_ok = 1;
+      }
+    }
+  }
+  assert_test(sleep_ok, "rtime duoc reset khi fork va khong tang khi sleep");
+
+  // Kiểm thử đa tiến trình chạy CPU đồng thời (an toàn SMP)
+  int wpipe[2];
+  int smp_ok = 0;
+  if (pipe(wpipe) == 0) {
+    for (int w = 0; w < 2; w++) {
+      int wpid = fork();
+      if (wpid == 0) {
+        close(wpipe[0]);
+        volatile uint64 work = 0;
+        int start = uptime();
+        while (uptime() - start < 5) {
+          work++;
+        }
+        (void)work;
+        int rt = read_proc_rtime(getpid());
+        write(wpipe[1], &rt, sizeof(rt));
+        close(wpipe[1]);
+        exit(0);
+      }
+    }
+    close(wpipe[1]);
+    int r1 = -1, r2 = -1;
+    read(wpipe[0], &r1, sizeof(r1));
+    read(wpipe[0], &r2, sizeof(r2));
+    close(wpipe[0]);
+    wait(0);
+    wait(0);
+    if (r1 > 0 && r2 > 0)
+      smp_ok = 1;
+  }
+  assert_test(smp_ok, "Cap nhat rtime doc lap cho nhieu tien trinh SMP");
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -416,6 +566,7 @@ main(int argc, char *argv[])
   test_read_only_protection();
   test_inode_cache_leak();
   test_proc_maps();
+  test_proc_rtime();
   printf("=======================================\n");
   exit(0);
 }
