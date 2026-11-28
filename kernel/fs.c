@@ -593,7 +593,7 @@ writei(struct inode *ip, int user_src, uint64 src, uint off, uint n)
   struct buf *bp;
 
   if (ip->type == T_PROC)
-    return -1;
+    return procfs_write(ip, user_src, src, off, n);
 
   if (off > ip->size || off + n < off)
     return -1;
